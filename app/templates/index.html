@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% set active = "streams" %}
+{% block title %}Streams - Streaming Testbench{% endblock %}
+{% block content %}
+<div class="panel">
+  <div style="margin-bottom:6px">Playlist for VLC (all streams): <span class="muted">VLC &rarr; Browse / Stream &rarr; "New stream" (or "Open network stream") and enter this URL</span></div>
+  <div class="url">
+    <input id="playlist" value="{{ playlist_url }}" readonly>
+    <button onclick="copyText('playlist')">Copy</button>
+  </div>
+  <div class="muted" style="margin-top:6px">
+    Filtered playlists follow the directory layout:
+    <code>/playlist/&lt;codec&gt;.m3u</code>, <code>/playlist/&lt;codec&gt;/&lt;resolution&gt;.m3u</code>,
+    <code>/playlist/&lt;codec&gt;/&lt;resolution&gt;/&lt;hdr&gt;.m3u</code> (use <code>all</code> as a wildcard, e.g. <code>/playlist/all/3840x2160/hdr.m3u</code>)
+  </div>
+</div>
+
+{% if ignored %}
+<p class="warn">&#9888; {{ ignored }} file(s) in the media directory are ignored because they do not follow
+<code>&lt;codec&gt;/&lt;resolution&gt;/&lt;hdr&gt;/&lt;id&gt;.&lt;ext&gt;</code>. See <a href="/admin#ignored">Admin</a>.</p>
+{% endif %}
+
+{% if not groups %}
+<div class="panel">
+  <p class="muted">No streams found in <code>{{ settings.media_dir }}</code>.</p>
+  <p class="muted">Place files as <code>&lt;codec&gt;/&lt;resolution&gt;/&lt;hdr&gt;/&lt;id&gt;.&lt;ext&gt;</code>,
+    e.g. <code>hevc/3840x2160/hdr/movie01.mkv</code>.
+    codec: <code>av1</code> <code>hevc</code> <code>vp9</code> / hdr: <code>hdr</code> <code>sdr</code> /
+    ext: <code>{{ settings.extensions|join(' ') }}</code></p>
+</div>
+{% endif %}
+
+{% for g in groups %}
+<h2>{{ g.codec|upper }} / {{ g.resolution }} / {{ g.hdr|upper }} ({{ g.entries|length }})</h2>
+<div class="panel">
+<div class="url" style="margin-bottom:10px">
+  <span class="muted">Playlist</span>
+  <input id="g{{ loop.index }}" value="{{ g.playlist }}" readonly>
+  <button onclick="copyText('g{{ loop.index }}')">Copy</button>
+</div>
+<table>
+  <thead><tr>
+    <th>ID</th><th>Video</th><th>HDR</th><th>Audio</th><th class="num">Duration</th>
+    <th class="num">Bitrate (avg / peak)</th><th>Manifest URL</th>
+  </tr></thead>
+  <tbody>
+  {% set gi = loop.index %}
+  {% for e in g.entries %}
+  <tr>
+    <td>
+      <a href="/streams/{{ e.key }}"><b>{{ e.id }}</b></a>
+      <div class="muted mono">{{ e.path }}</div>
+      {% if e.status != 'ready' %}<span class="badge {{ 'err' if e.status == 'error' else 'warn' }}">{{ e.status }}</span>{% endif %}
+      {% if e.error %}<div class="err">{{ e.error[:200] }}</div>{% endif %}
+      {% for m in e.mismatches %}<div class="warn">&#9888; {{ m }}</div>{% endfor %}
+      {% if e.warnings and e.warnings|length > e.mismatches|length %}<div class="warn">&#9888; {{ e.warnings|length - e.mismatches|length }} other warning(s)</div>{% endif %}
+    </td>
+    <td>
+      {% if e.video %}
+      <span class="badge">{{ e.video.codec|upper }}</span>
+      {{ e.video.width }}x{{ e.video.height }} @ {{ '%.3g'|format(e.video.fps) }}fps
+      <div class="muted mono">{{ e.video.codecs }}</div>
+      {% else %}<span class="muted">-</span>{% endif %}
+    </td>
+    <td>{% if e.hdr %}<span class="badge {{ 'hdr' if e.hdr.format != 'SDR' }}">{{ e.hdr.format }}</span>{% else %}-{% endif %}</td>
+    <td>{% if e.audio %}{{ e.audio.codec }} {{ e.audio.channels }}ch{% elif e.video %}<span class="muted">none</span>{% else %}-{% endif %}</td>
+    <td class="num">{% if e.duration %}{{ e.duration|duration }}{% else %}-{% endif %}</td>
+    <td class="num">{% if e.video %}{{ e.avg_bitrate|mbps }} / {{ e.peak_bitrate|mbps }}{% else %}{{ e.size|filesize }}{% endif %}</td>
+    <td>
+      <div class="url">
+        <input id="u{{ gi }}_{{ loop.index }}" value="{{ e.manifest }}" readonly>
+        <button onclick="copyText('u{{ gi }}_{{ loop.index }}')">Copy</button>
+      </div>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endfor %}
+{% endblock %}

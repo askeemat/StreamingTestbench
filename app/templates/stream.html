@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% set active = "streams" %}
+{% block title %}{{ e.id }} - Streaming Testbench{% endblock %}
+{% block content %}
+<p><a href="/">&larr; Streams</a></p>
+<div class="panel">
+  <div style="font-size:16px; margin-bottom:8px">{{ e.id }} <span class="muted mono" style="font-size:13px">{{ e.path }}</span>
+    <span class="badge {{ 'ok' if e.status == 'ready' else 'err' if e.status == 'error' else 'warn' }}">{{ e.status }}</span>
+  </div>
+  <div class="url">
+    <input id="mpd" value="{{ e.manifest }}" readonly>
+    <button onclick="copyText('mpd')">Copy</button>
+    <a class="btn" href="{{ e.manifest }}" target="_blank">Open MPD</a>
+  </div>
+  {% if e.error %}<p class="err">{{ e.error }}</p>{% endif %}
+  {% for w in e.warnings or [] %}<p class="warn">&#9888; {{ w }}</p>{% endfor %}
+</div>
+
+{% if e.video %}
+<div class="grid">
+  <div class="panel">
+    <h2 style="margin-top:0">File</h2>
+    <dl class="kv">
+      <dt>ID</dt><dd class="mono">{{ e.id }}</dd>
+      <dt>Path</dt><dd class="mono">{{ e.path }}</dd>
+      <dt>Codec / Resolution / HDR</dt><dd class="mono">{{ e.layout.codec }} / {{ e.layout.resolution }} / {{ e.layout.hdr }}</dd>
+      <dt>Size</dt><dd>{{ e.size|filesize }}</dd>
+      <dt>Duration</dt><dd>{{ e.duration|duration }} ({{ '%.3f'|format(e.duration) }} s)</dd>
+      <dt>Avg bitrate</dt><dd>{{ e.avg_bitrate|mbps }}</dd>
+      <dt>Peak segment bitrate</dt><dd>{{ e.peak_bitrate|mbps }}</dd>
+      <dt>Index time</dt><dd>{{ '%.2f'|format(e.index_seconds) }} s</dd>
+    </dl>
+  </div>
+  <div class="panel">
+    <h2 style="margin-top:0">Video</h2>
+    <dl class="kv">
+      <dt>Codec</dt><dd>{{ e.video.codec|upper }} {{ e.video.profile }}</dd>
+      <dt>Codecs string</dt><dd class="mono">{{ e.video.codecs }}</dd>
+      <dt>Resolution</dt><dd>{{ e.video.width }}x{{ e.video.height }}</dd>
+      <dt>Frame rate</dt><dd>{{ '%.3f'|format(e.video.fps) }} ({{ e.video.r_frame_rate }})</dd>
+      <dt>Pixel format</dt><dd>{{ e.video.pix_fmt }}</dd>
+      <dt>Frames</dt><dd>{{ e.video.packets }}</dd>
+      <dt>Time base / timescale</dt><dd>{{ e.video.time_base }} / {{ e.video.timescale }}</dd>
+    </dl>
+  </div>
+  <div class="panel">
+    <h2 style="margin-top:0">HDR</h2>
+    <dl class="kv">
+      <dt>Format</dt><dd><span class="badge {{ 'hdr' if e.hdr.format != 'SDR' }}">{{ e.hdr.format }}</span></dd>
+      <dt>Primaries</dt><dd>{{ e.hdr.color_primaries }}</dd>
+      <dt>Transfer</dt><dd>{{ e.hdr.color_transfer }}</dd>
+      <dt>Matrix</dt><dd>{{ e.hdr.color_space }}</dd>
+      {% if e.hdr.mastering_display %}
+      <dt>Mastering display</dt><dd class="mono">
+        {% for k, v in e.hdr.mastering_display.items() %}{{ k }}={{ v }}<br>{% endfor %}</dd>
+      {% endif %}
+      {% if e.hdr.content_light %}
+      <dt>Content light</dt><dd class="mono">
+        {% for k, v in e.hdr.content_light.items() %}{{ k }}={{ v }}<br>{% endfor %}</dd>
+      {% endif %}
+      {% if e.hdr.dolby_vision %}
+      <dt>Dolby Vision</dt><dd class="mono">
+        {% for k, v in e.hdr.dolby_vision.items() %}{{ k }}={{ v }}<br>{% endfor %}</dd>
+      {% endif %}
+    </dl>
+  </div>
+  <div class="panel">
+    <h2 style="margin-top:0">Segments / GOP</h2>
+    <dl class="kv">
+      <dt>Video segments</dt><dd>{{ e.video.segments }}</dd>
+      <dt>Segment duration</dt><dd>{{ '%.3f'|format(e.video.segment_min) }} – {{ '%.3f'|format(e.video.segment_max) }} s</dd>
+      <dt>Keyframes</dt><dd>{{ e.gop.keyframes }}</dd>
+      <dt>Keyframe interval</dt><dd>avg {{ '%.3f'|format(e.gop.avg) }} s (min {{ '%.3f'|format(e.gop.min) }}, max {{ '%.3f'|format(e.gop.max) }})</dd>
+    </dl>
+  </div>
+  {% if e.audio %}
+  <div class="panel">
+    <h2 style="margin-top:0">Audio</h2>
+    <dl class="kv">
+      <dt>Codec</dt><dd>{{ e.audio.codec }} {{ e.audio.profile }}</dd>
+      <dt>Codecs string</dt><dd class="mono">{{ e.audio.codecs }}</dd>
+      <dt>Channels</dt><dd>{{ e.audio.channels }} {{ e.audio.channel_layout }}</dd>
+      <dt>Sample rate</dt><dd>{{ e.audio.sample_rate }} Hz</dd>
+      <dt>Bitrate</dt><dd>{{ e.audio.bitrate|mbps }}</dd>
+      <dt>Language</dt><dd>{{ e.audio.language or '-' }}</dd>
+    </dl>
+  </div>
+  {% endif %}
+</div>
+
+<h2>Video segments</h2>
+<div class="panel">
+<table>
+  <thead><tr><th class="num">#</th><th class="num">Start (s)</th><th class="num">Duration (s)</th>
+    <th class="num">Frames</th><th class="num">Size</th><th class="num">Bitrate</th><th></th></tr></thead>
+  <tbody>
+  {% for s in segments %}
+  <tr>
+    <td class="num">{{ s.number }}</td>
+    <td class="num">{{ '%.3f'|format(s.start) }}</td>
+    <td class="num">{{ '%.3f'|format(s.duration) }}</td>
+    <td class="num">{{ s.frames }}</td>
+    <td class="num">{{ s.size|filesize }}</td>
+    <td class="num">{{ s.bitrate|mbps }}</td>
+    <td><a href="/dash/{{ e.key }}/video/{{ s.number }}.m4s">download</a></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

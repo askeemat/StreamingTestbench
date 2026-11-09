@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% set active = "admin" %}
+{% block title %}Admin - Streaming Testbench{% endblock %}
+{% block content %}
+<h2 style="margin-top:0">Server</h2>
+<div class="panel">
+  <dl class="kv">
+    <dt>Base URL</dt><dd class="mono">{{ base_url }}</dd>
+    <dt>Media directory</dt><dd class="mono">{{ settings.media_dir }}</dd>
+    <dt>Target segment duration</dt><dd>{{ settings.segment_duration }} s (cut at keyframes)</dd>
+    <dt>Max concurrent ffmpeg jobs</dt><dd>{{ settings.max_jobs }}</dd>
+    <dt>Audio</dt><dd>{{ 'enabled' if settings.enable_audio else 'disabled' }}</dd>
+    <dt>Pre-indexing</dt><dd>{{ 'enabled' if settings.preindex else 'disabled' }}</dd>
+    <dt>ffmpeg</dt><dd class="mono">{{ ffmpeg_version }}</dd>
+    <dt>Started</dt><dd>{{ started|datetime }}</dd>
+  </dl>
+</div>
+
+<h2>Live status <span class="muted" id="updated" style="text-transform:none"></span></h2>
+<div class="grid" id="stats"></div>
+
+<h2>Active ffmpeg jobs</h2>
+<div class="panel"><table>
+  <thead><tr><th>Job</th><th class="num">Elapsed</th></tr></thead>
+  <tbody id="jobs"><tr><td colspan="2" class="muted">-</td></tr></tbody>
+</table></div>
+
+<h2>Recent requests
+  <form class="inline" method="post" action="/admin/clear-log"><button type="submit">Clear log</button></form>
+  <label class="muted" style="text-transform:none; font-size:13px; margin-left:12px">
+    <input type="checkbox" id="segOnly" checked> segments only</label>
+</h2>
+<div class="panel"><table>
+  <thead><tr>
+    <th>Time</th><th>Client</th><th>Stream</th><th>Type</th><th class="num">#</th><th class="num">Status</th>
+    <th class="num">Size</th><th class="num">Media (s)</th><th class="num">Gen (ms)</th><th class="num">Gen / media</th>
+    <th>Notes</th>
+  </tr></thead>
+  <tbody id="requests"></tbody>
+</table></div>
+
+<h2>Library
+  <form class="inline" method="post" action="/admin/rescan"><button type="submit">Rescan media directory</button></form>
+</h2>
+<div class="panel">
+  <p class="muted">ready {{ counts.ready }} / indexing {{ counts.indexing }} / pending {{ counts.pending }} / error {{ counts.error }}</p>
+  <p class="muted">Layout: <code>{{ settings.media_dir }}/{{ layout }}</code>
+    (codec: av1 / hevc / vp9, resolution: e.g. 3840x2160, hdr: hdr / sdr, id: A-Z a-z 0-9 _ -, unique)</p>
+  <table>
+    <thead><tr><th>ID</th><th>Codec / Resolution / HDR</th><th>Status</th><th>Probed video</th>
+      <th class="num">Size</th><th class="num">Index time</th><th></th></tr></thead>
+    <tbody>
+    {% for e in entries %}
+    <tr>
+      <td><a href="/streams/{{ e.key }}"><b>{{ e.id }}</b></a><div class="muted mono">{{ e.path }}</div>
+        {% for w in e.warnings or [] %}<div class="warn">&#9888; {{ w }}</div>{% endfor %}
+        {% if e.error %}<div class="err">{{ e.error[:300] }}</div>{% endif %}</td>
+      <td class="mono">{{ e.layout.codec }} / {{ e.layout.resolution }} / {{ e.layout.hdr }}</td>
+      <td><span class="badge {{ 'ok' if e.status == 'ready' else 'err' if e.status == 'error' else 'warn' }}">{{ e.status }}</span></td>
+      <td>{% if e.video %}{{ e.video.codec|upper }} {{ e.video.width }}x{{ e.video.height }} {{ '%.3g'|format(e.video.fps) }}fps {{ e.hdr.format }}{% endif %}</td>
+      <td class="num">{{ e.size|filesize }}</td>
+      <td class="num">{% if e.index_seconds %}{{ '%.2f'|format(e.index_seconds) }} s{% endif %}</td>
+      <td><form class="inline" method="post" action="/admin/reindex/{{ e.key }}"><button type="submit">Re-index</button></form></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2 id="ignored">Ignored files ({{ ignored|length }})</h2>
+<div class="panel">
+  {% if ignored %}
+  <table>
+    <thead><tr><th>Path</th><th>Reason</th></tr></thead>
+    <tbody>
+    {% for i in ignored %}<tr><td class="mono">{{ i.rel }}</td><td class="warn">{{ i.reason }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">None</p>{% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function fmtSize(n) { const u = ["B","KB","MB","GB"]; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return (i ? n.toFixed(1) : n) + " " + u[i]; }
+function stat(k, v) { return `<div class="stat"><div class="v">${v}</div><div class="k">${k}</div></div>`; }
+
+async function refresh() {
+  let data;
+  try { data = await (await fetch("/api/status?limit=200")).json(); } catch (e) { return; }
+  const s = data.summary;
+  let html = stat("Requests (total)", s.total) + stat("Errors", s.errors);
+  for (const kind of ["video", "audio"]) {
+    const k = s[kind];
+    if (!k) continue;
+    html += stat(`${kind} segments`, k.count)
+         + stat(`${kind} gen avg / p95`, `${k.avg_ms.toFixed(0)} / ${k.p95_ms.toFixed(0)} ms`)
+         + stat(`${kind} gen max`, `${k.max_ms.toFixed(0)} ms`)
+         + stat(`${kind} worst gen/media`, `<span class="${k.max_ratio > 0.5 ? 'err' : ''}">${(k.max_ratio * 100).toFixed(1)}%</span>`);
+    if (kind === "video") html += stat("video served bitrate", `${k.throughput_mbps.toFixed(1)} Mbps`);
+    if (k.unverified || k.retries) html += stat(`${kind} unverified / retried`, `<span class="warn">${k.unverified} / ${k.retries}</span>`);
+  }
+  html += stat("Active ffmpeg jobs", data.jobs.length);
+  document.getElementById("stats").innerHTML = html;
+
+  document.getElementById("jobs").innerHTML = data.jobs.length
+    ? data.jobs.map(j => `<tr><td class="mono">${esc(j.label)}</td><td class="num">${j.elapsed.toFixed(1)} s</td></tr>`).join("")
+    : `<tr><td colspan="2" class="muted">idle</td></tr>`;
+
+  const segOnly = document.getElementById("segOnly").checked;
+  const rows = data.requests.filter(r => !segOnly || r.kind === "video" || r.kind === "audio").map(r => {
+    const t = new Date(r.time * 1000).toLocaleTimeString();
+    const ratio = r.seg_duration ? (r.realtime_ratio * 100).toFixed(1) + "%" : "";
+    const notes = [];
+    if (r.attempts > 1) notes.push(`retried x${r.attempts - 1}`);
+    if (!r.verified) notes.push("size check failed");
+    if (r.error) notes.push(r.error.slice(0, 120));
+    return `<tr>
+      <td>${t}</td><td title="${esc(r.user_agent)}">${esc(r.client)}</td><td class="mono">${esc(r.stream_id)}</td><td>${r.kind}</td>
+      <td class="num">${r.number || ""}</td><td class="num ${r.status >= 400 ? 'err' : ''}">${r.status}</td>
+      <td class="num">${fmtSize(r.bytes)}</td><td class="num">${r.seg_duration ? r.seg_duration.toFixed(3) : ""}</td>
+      <td class="num">${r.gen_ms.toFixed(0)}</td><td class="num ${r.realtime_ratio > 0.5 ? 'err' : ''}">${ratio}</td>
+      <td class="${notes.length ? 'warn' : ''}">${esc(notes.join(", "))}</td></tr>`;
+  });
+  document.getElementById("requests").innerHTML = rows.join("") || `<tr><td colspan="11" class="muted">no requests yet</td></tr>`;
+  document.getElementById("updated").textContent = "updated " + new Date().toLocaleTimeString();
+}
+document.getElementById("segOnly").addEventListener("change", refresh);
+refresh();
+setInterval(refresh, 2000);
+</script>
+{% endblock %}
